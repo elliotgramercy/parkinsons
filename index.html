@@ -1,0 +1,555 @@
+<html>
+	<head>
+		<style>
+			body{
+				text-align: center;
+			}
+			video { 
+			   position:absolute;
+			   visibility:hidden;
+			}
+			canvas{
+			    display: block;
+			    margin: 0 auto;
+			    width: 70%;
+			}
+			.onoffswitch {
+			    position: relative; width: 90px;
+	    	    display: inline-block;
+    			vertical-align: middle;
+			    -webkit-user-select:none; -moz-user-select:none; -ms-user-select: none;
+			}
+			.onoffswitch-checkbox {
+			    display: none;
+			}
+			.onoffswitch-label {
+			    display: block; overflow: hidden; cursor: pointer;
+			    border: 2px solid #999999; border-radius: 20px;
+			}
+			.onoffswitch-inner {
+			    display: block; width: 200%; margin-left: -100%;
+			    transition: margin 0.3s ease-in 0s;
+			}
+			.onoffswitch-inner:before, .onoffswitch-inner:after {
+			    display: block; float: left; width: 50%; height: 30px; padding: 0; line-height: 30px;
+			    font-size: 14px; color: white; font-family: Trebuchet, Arial, sans-serif; font-weight: bold;
+			    box-sizing: border-box;
+			}
+			.onoffswitch-inner:before {
+			    content: "IMG";
+			    padding-left: 0;
+			    background-color: #34A7C1; color: #FFFFFF;
+			}
+			.onoffswitch-inner:after {
+			    content: "RECT";
+			    padding-right: 10px;
+			    background-color: #EEEEEE; color: #999999;
+			    text-align: right;
+			}
+			.onoffswitch-switch {
+			    display: block; width: 18px; margin: 6px;
+			    background: #FFFFFF;
+			    position: absolute; top: 0; bottom: 0;
+			    right: 56px;
+			    border: 2px solid #999999; border-radius: 20px;
+			    transition: all 0.3s ease-in 0s; 
+			}
+			.onoffswitch-checkbox:checked + .onoffswitch-label .onoffswitch-inner {
+			    margin-left: 0;
+			}
+			.onoffswitch-checkbox:checked + .onoffswitch-label .onoffswitch-switch {
+			    right: 0px; 
+			}
+
+			/*HIDE IMG OR RECT BUTTONS BASED ON SWITCH*/
+			.rect #img_switch,
+			.rect #img,
+			.rect label[for="img"],
+			.img #obj{
+				display:none;
+			}
+		</style>
+		<script src="js/face.js"></script>
+		<script src="js/ccv.js"></script>
+	</head>
+	<body class="rect">
+		<video id='v'></video>
+		<canvas id='c'></canvas>
+		<div class="onoffswitch">
+		    <input type="checkbox" name="onoffswitch" class="onoffswitch-checkbox" id="myonoffswitch" checked>
+		    <label class="onoffswitch-label" for="myonoffswitch">
+		        <span class="onoffswitch-inner"></span>
+		        <span class="onoffswitch-switch"></span>
+		    </label>
+		</div>
+		<button id='grey'>Toggle Greyness</button>
+		<input type="number" id="face_detection_time" placeholder="Duration" value="5" />
+		<button id='obj'>Fade Object In/Out</button>
+		<button id='img_switch'>Fade Image In/Out</button>
+		<label for="img">Image:</label>
+        <input id="img" name="img" data-max-size="67108" type="file" accept=".tif,.tiff,.gif,.jpeg,.jpg,.png" >
+		<script>
+			var myinit = false;
+			(function() {
+
+			window.addEventListener('DOMContentLoaded', function() {
+				var isStreaming = false,
+					v = document.getElementById('v'),
+					c = document.getElementById('c'),
+					grey = document.getElementById('grey'),
+					obj = document.getElementById('obj'),
+					con = c.getContext('2d'),
+					w = c.offsetWidth, 
+					h = c.offsetHeight,
+					start_time = Date.now(),
+					elapsed_time = 0,
+					dur = 30,
+					steps = 20,
+					interval_time = dur/steps,
+					opacity_step = 1/steps,
+					progress = 0,
+					img_progress = 0,
+					obj_on = false,
+					img_on = false,
+					obj_on_super = true,
+					img_on_super = false,
+					greyscale = false,
+					rectangle_percent_w = .27,
+					rectangle_percent_h = .25,
+					rectangle_width = w * rectangle_percent_w,
+					rectangle_height = h * rectangle_percent_h,
+					rectangle_x = 100,
+					rectangle_y = 100,
+					rectangle_r = 0,
+					rectangle_g = 0,
+					rectangle_b = 0,
+					img_x = w*.7,
+					img_y = h*.7,
+					img_w_percent = .2,
+					img_h_percent = .3,
+					img_w = w*img_w_percent,
+					img_h = h*img_h_percent,
+					img_up = false,
+					click_x = 0,
+					click_y = 0,
+					click_init_x = 0,
+					click_init_y = 0,
+					move_rectangle = false,
+					resize_rectangle = false,
+					move_img = false,
+					resize_img = false,
+					img = document.getElementById('img'),
+					img_switch = document.getElementById('img_switch'),
+					face_detection_time = document.getElementById('face_detection_time'),
+					faces = [],
+					my_timeout = null,
+					cur_opacity = 0,
+					cur_img_opacity = 0,
+					myonoffswitch = document.getElementById('myonoffswitch'),
+					face_detected_timeout,
+					face_in_timeout_finished = true,
+					face_in = false;
+
+				// Cross browser
+				navigator.getUserMedia = (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia);
+				if (navigator.getUserMedia) {
+					// Request access to video only
+					navigator.getUserMedia(
+						{
+							video:true,
+							audio:false
+						},		
+						function(stream) {
+							// Cross browser checks
+							var url = window.URL || window.webkitURL;
+		        			v.src = url ? url.createObjectURL(stream) : stream;
+		        			// Set the video to play
+		        			v.play();
+						},
+						function(error) {
+							alert('Something went wrong. (error code ' + error.code + ')');
+							return;
+						}
+					);
+				}
+				else {
+					alert('Sorry, the browser you are using doesn\'t support getUserMedia');
+					return;
+				}
+
+				// Wait until the video stream can play
+				v.addEventListener('canplay', function(e) {
+				    if (!isStreaming) {
+				    	// videoWidth isn't always set correctly in all browsers
+				    	if (v.videoWidth > 0) h = v.videoHeight / (v.videoWidth / w);
+						c.setAttribute('width', w);
+						c.setAttribute('height', h);
+						// Reverse the canvas image
+						con.translate(w, 0);
+		  				con.scale(-1, 1);
+				      	isStreaming = true;
+				    }
+				}, false);
+
+				var set_rgb = function(){
+					var imageData = con.getImageData(w-rectangle_x-rectangle_width-1,rectangle_y-1, 1, 1);
+					var data = imageData.data;
+					rectangle_r = data[0];
+					rectangle_g = data[1];
+					rectangle_b = data[2];
+					/*
+					var min_x = rectangle_x;
+					var max_x = rectangle_x + w;
+					var min_y = rectangle_y;
+					var max_y = rectangle_y + h;
+					for(var x = min_x; x<=max_x; x++){
+						for(var y = min_y; y<=max_y; y++){
+
+						}
+					}
+					*/
+					handle_pixels();
+				}
+
+				// Wait for the video to start to play
+				v.addEventListener('play', function() {
+					// Every 5 milliseconds copy the video image to the canvas
+					setInterval(function() {
+						if (v.paused || v.ended) return;
+						con.fillRect(0, 0, w, h);
+						con.drawImage(v, 0, 0, w, h);
+						elapsed_time = Date.now() - start_time;
+						if (greyscale) goingGrey();
+						set_rgb();
+					}, 33);
+					setInterval(function() {
+						detect_face();
+					}, 1000);
+				}, false);
+
+				var goingGrey = function() {
+					var imageData = con.getImageData(0, 0, w, h);
+					var data = imageData.data;
+					for (var i = 0; i < data.length; i += 4) {
+						var bright = 0.34 * data[i] + 0.5 * data[i + 1] + 0.16 * data[i + 2];
+		          		data[i] = bright;
+		          		data[i + 1] = bright;
+		          		data[i + 2] = bright;
+					}
+					con.putImageData(imageData, 0, 0);
+				}
+
+				var handle_pixels = function(){
+					
+					if(obj_on && obj_on_super){
+						if(elapsed_time > progress && cur_opacity < 1){
+							progress = elapsed_time + interval_time;
+							//con.drawImage(v, 0, 0, w, h);	//draw what is in the webcam feed (clears whatever was drawn in before);
+							//var imageData = con.getImageData(0, 0, w, h);
+							//con.putImageData(imageData, 0, 0);
+							con.fillStyle = "rgba("+rectangle_r+","+rectangle_g+","+rectangle_b+","+cur_opacity+")";
+							con.fillRect(rectangle_x,rectangle_y,rectangle_width,rectangle_height);
+							cur_opacity += opacity_step;
+							
+						}				
+						else if(cur_opacity >= 1){
+							con.fillStyle = "rgba("+rectangle_r+","+rectangle_g+","+rectangle_b+",1)";
+							con.fillRect(rectangle_x,rectangle_y,rectangle_width,rectangle_height);
+						}
+					}
+					else if(!obj_on || !obj_on_super){
+						if(elapsed_time > progress && cur_opacity > 0){
+							progress = elapsed_time + interval_time;
+							//con.drawImage(v, 0, 0, w, h);	//draw what is in the webcam feed (clears whatever was drawn in before);
+							//var imageData = con.getImageData(0, 0, w, h);
+							//con.putImageData(imageData, 0, 0);
+							con.fillStyle = "rgba("+rectangle_r+","+rectangle_g+","+rectangle_b+","+cur_opacity+")";
+							con.fillRect(rectangle_x,rectangle_y,rectangle_width,rectangle_height);
+							cur_opacity -= opacity_step;
+						}				
+						else if(cur_opacity <= 0){
+							//dont think anything needs to happen here
+							//con.fillStyle = "rgba("+rectangle_r+","+rectangle_g+","+rectangle_b+",0)";
+							//con.fillRect(rectangle_x,rectangle_y,rectangle_width,rectangle_height);
+						}
+					}
+					if(img_on && img_on_super){
+						if(elapsed_time > img_progress && cur_img_opacity < 1){
+							img_progress = elapsed_time + interval_time;
+							//for image
+							if(img_up){
+								con.save();
+								con.globalAlpha = cur_img_opacity;
+								con.drawImage(img_up, img_x, img_y, img_w, img_h);
+								con.restore();
+								cur_img_opacity += opacity_step;
+							}
+						}
+						else if(cur_img_opacity >= 1){
+							//for image
+							if(img_up){
+								con.drawImage(img_up, img_x, img_y, img_w, img_h);
+							}
+						}
+					}
+					else if(!img_on || !img_on_super){
+						if(elapsed_time > img_progress && cur_img_opacity > 0){
+							img_progress = elapsed_time + interval_time;
+							//for image
+							if(img_up){
+								con.save();
+								con.globalAlpha = cur_img_opacity;
+								con.drawImage(img_up, img_x, img_y, img_w, img_h);
+								con.restore();
+							}
+							cur_img_opacity -= opacity_step;
+						}
+					}
+					if(faces.length > 0){
+						/*
+						for(var i=0;i<faces.length;i++){
+							con.fillRect(w-faces[i].x-faces[i].width, faces[i].y, faces[i].width, faces[i].height);
+						}
+						*/
+						clearTimeout(face_detected_timeout);
+						face_detected_timeout = null;
+						if(face_in == false){
+							var num = parseInt(face_detection_time.value);
+							if(face_in_timeout_finished){
+								face_in_timeout_finished = false;
+								my_timeout = setTimeout(function(){
+									obj_on = true;
+									img_on = false;
+									face_in_timeout_finished = true;
+									face_in = true;
+								},num * 1000);
+							}
+						}
+						
+					}
+					else{
+						if(face_detected_timeout == null){
+							var num = parseInt(face_detection_time.value);
+							face_detected_timeout = setTimeout(function(){
+								obj_on = false;
+								img_on = true;
+								face_in = false;
+							},num * 1000);
+						}
+					}
+				}
+
+				// When the grey button is clicked, toggle the greyness indicator
+				grey.addEventListener('click', function() {	greyscale = !greyscale; }, false);
+
+				//when fade button is clicked, fade the object in and out.
+				obj.addEventListener('click', function() {
+					if(cur_opacity <= 0){
+						obj_on_super = false;
+					}
+					if(obj_on_super){
+						obj_on_super = false;
+						obj_on = false;
+					}
+					else{
+						obj_on_super = true;
+						obj_on = true;
+					}
+					if(obj_on_super){
+						img_on = false;
+						img_on_super = false;
+					}
+					clearTimeout(my_timeout);
+				}, false);
+
+				img_switch.addEventListener('click', function() {
+					if(img_up){
+						if(cur_img_opacity <= 0){
+							img_on_super = false;
+						}
+						if(img_on_super){
+							img_on_super = false;
+							img_on = false;
+						}
+						else{
+							img_on_super = true;
+							img_on = true;
+						}
+						if(img_on_super){
+							obj_on = false;
+							obj_on_super = false;
+						}
+						clearTimeout(my_timeout);
+					}
+				}, false);
+
+				function start_click(event) {
+					var X = c.offsetWidth-(event.pageX - this.offsetLeft);
+					var Y = event.pageY - this.offsetTop;
+					var move_x_min = rectangle_x + rectangle_width*.25;
+					var move_y_min = rectangle_y + rectangle_height*.25;
+					var move_x_max = rectangle_x + rectangle_width*.75;
+				  	var move_y_max = rectangle_y + rectangle_height*.75;
+				  	var resize_x_min = rectangle_x + rectangle_width*.75;
+					var resize_y_min = rectangle_y*.75;
+					var resize_x_max = rectangle_x + rectangle_width;
+				  	var resize_y_max = rectangle_y + rectangle_height;
+				  	if(X >= move_x_min && X <= move_x_max &&
+				  		Y >= move_y_min && Y <= move_y_max){
+				  		click_init_x = X,
+						click_init_y = Y,
+				  		move_rectangle = true;
+				  	}
+				  	else if(X >= resize_x_min && X <= resize_x_max &&
+				  		Y >= resize_y_min && Y <= resize_y_max){
+				  		click_init_x = X,
+						click_init_y = Y,
+				  		resize_rectangle = true;
+				  	}
+
+				  	//for image
+				  	var move_img_x_min = img_x + img_w*.25;
+					var move_img_y_min = img_y + img_h*.25;
+					var move_img_x_max = img_x + img_w*.75;
+				  	var move_img_y_max = img_y + img_h*.75;
+				  	var resize_img_x_min = img_x + img_w*.75;
+					var resize_img_y_min = img_y*.75;
+					var resize_img_x_max = img_x + img_w;
+				  	var resize_img_y_max = img_y + img_h;
+				  	if(X >= move_img_x_min && X <= move_img_x_max &&
+				  		Y >= move_img_y_min && Y <= move_img_y_max){
+				  		click_init_x = X,
+						click_init_y = Y,
+				  		move_img = true;
+				  	}
+				  	else if(X >= resize_img_x_min && X <= resize_img_x_max &&
+				  		Y >= resize_img_y_min && Y <= resize_img_y_max){
+				  		click_init_x = X,
+						click_init_y = Y,
+				  		resize_img = true;
+				  	}
+				}
+				c.addEventListener("mousedown", start_click, false);
+
+				function handle_move(event){
+					if(move_rectangle){
+						var X = c.offsetWidth-(event.pageX - this.offsetLeft);
+						var Y = event.pageY - this.offsetTop;
+						var move_x = X - click_init_x;
+						var move_y = Y - click_init_y;
+						click_init_x = X,
+						click_init_y = Y;
+						rectangle_x += move_x;
+						rectangle_y += move_y;
+					}
+					if(resize_rectangle){
+						var X = c.offsetWidth-(event.pageX - this.offsetLeft);
+						var Y = event.pageY - this.offsetTop;
+						var move_x = X - click_init_x;
+						var move_y = Y - click_init_y;
+						click_init_x = X,
+						click_init_y = Y;
+						rectangle_width += move_x;
+						rectangle_height += move_y;
+					}
+					//for image
+					if(move_img){
+						var X = c.offsetWidth-(event.pageX - this.offsetLeft);
+						var Y = event.pageY - this.offsetTop;
+						var move_x = X - click_init_x;
+						var move_y = Y - click_init_y;
+						click_init_x = X,
+						click_init_y = Y;
+						img_x += move_x;
+						img_y += move_y;
+					}
+					if(resize_img){
+						var X = c.offsetWidth-(event.pageX - this.offsetLeft);
+						var Y = event.pageY - this.offsetTop;
+						var move_x = X - click_init_x;
+						var move_y = Y - click_init_y;
+						click_init_x = X,
+						click_init_y = Y;
+						img_w += move_x;
+						img_h += move_y;
+					}
+				}
+				c.addEventListener("mousemove", handle_move, false);
+
+				function end_click(event){
+					move_rectangle = false;
+					resize_rectangle = false;
+					move_img = false;
+					resize_img = false;
+					if(rectangle_width <= 0){
+						rectangle_width = w * rectangle_percent_w;
+					}
+					if(rectangle_height <= 0){
+						rectangle_height = h * rectangle_percent_h;
+					}
+					if(img_w<=0){
+						img_w = w*img_w_percent;
+					}
+					if(img_h<=0){
+						img_h = h*img_h_percent;
+					}		        	
+				}
+				
+				c.addEventListener("mouseup", end_click, false);
+
+				function handle_uploaded_img(event){
+			        if (!this.files[0].name.match(/\.(jpg|jpeg|png|gif)$/))
+			        {
+			            alert('This file type is not allowed');
+			        }
+			        else{
+			            if (event.target) targ = event.target;
+			            else if (event.srcElement) targ = event.srcElement;
+			            file = targ.files[0];
+			            var reader = new FileReader();
+					    reader.onload = function(event){
+					        img_up = new Image();
+					        img_up.onload = function(){
+					        	img_w = w*img_w_percent;
+					        	img_h = h*img_h_percent;
+					        	if(img_up.width > img_up.height){	//if landscape
+					        		img_h = Math.round((img_w * img_up.height)/img_up.width);	//leave width, adjust height
+					        	}
+					        	else{	//portrait
+					        		img_w = Math.round((img_h * img_up.width)/img_up.height);	//leave height, adjust width
+					        	}
+					            //con.drawImage(img_up, img_x, img_y, img_w, img_h);
+					        }
+					        img_up.src = event.target.result;
+					    }
+					    reader.readAsDataURL(file);
+					    img_on = true; 
+					    img_on_super = true;
+					    obj_on = false;
+					    obj_on_super = false;
+			        }
+				}
+				img.addEventListener('change', handle_uploaded_img, false);
+
+				function handle_switch(){
+					if(document.body.className.match(new RegExp('(\\s|^)rect(\\s|$)'))){
+						document.body.className = document.body.className.replace(/\brect\b/,'');
+						document.body.className += ' img';
+					}
+					else if(document.body.className.match(new RegExp('(\\s|^)img(\\s|$)'))){
+						document.body.className =document.body.className.replace(/\bimg\b/,'');
+						document.body.className += ' rect';
+					}
+				}
+				myonoffswitch.addEventListener('change', handle_switch, false);
+
+				function detect_face(){
+					faces = ccv.detect_objects({canvas : (ccv.pre(c)), cascade: cascade, interval: 2, min_neighbors: 1});
+				}
+				
+			})
+
+		})();
+		</script>
+	</body>
+</html>
